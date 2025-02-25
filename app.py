@@ -1,7 +1,7 @@
 import os
 import mysql.connector
 import socket
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 
 app = Flask(__name__)
 
@@ -48,7 +48,7 @@ create_table()
 
 @app.route('/')
 def home():
-    """נתיב ראשי - רושם ביקור ומחזיר את ה-IP של השרת Flask"""
+    """נתיב ראשי - רושם ביקור, מחזיר את ה-IP של השרת Flask, ושולח עוגייה"""
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Database connection failed"}), 500
@@ -56,7 +56,13 @@ def home():
     try:
         cursor = conn.cursor()
         ip = request.remote_addr
-        cursor.execute("INSERT INTO access_log (ip_address) VALUES (%s)", (ip,))
+
+        # בדיקה אם כבר קיימת עוגייה עם ה-IP של השרת
+        server_ip = request.cookies.get("server_ip")
+        if not server_ip:
+            server_ip = socket.gethostbyname(socket.gethostname())  # אם אין עוגייה, קובע IP חדש
+
+        cursor.execute("INSERT INTO access_log (ip_address, server_ip) VALUES (%s, %s)", (ip, server_ip))
         conn.commit()
 
         cursor.execute("SELECT COUNT(*) FROM access_log")
@@ -65,12 +71,17 @@ def home():
         cursor.close()
         conn.close()
 
-        # מחזיר את כתובת ה-IP של השרת Flask המטפל בבקשה
-        return jsonify({
-            "server_ip": socket.gethostbyname(socket.gethostname()),
+        # יצירת התגובה עם עוגייה
+        response = make_response(jsonify({
+            "server_ip": server_ip,
             "message": "Visit logged",
             "total_visits": count
-        })
+        }))
+
+        # אם לא הייתה עוגייה, נוסיף אותה עם תוקף של 5 דקות
+        response.set_cookie("server_ip", server_ip, max_age=300, httponly=False)
+
+        return response
     except mysql.connector.Error as e:
         return jsonify({"error": f"MySQL Error: {e}"}), 500
 
